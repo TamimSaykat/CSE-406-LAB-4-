@@ -1,0 +1,177 @@
+// ===== Task 1: Baseline broadcast mesh =====
+// Boards: NodeMCU ESP8266
+// Libs: painlessMesh (via Library Manager)
+// Arduino IDE: 1.8+
+// -------------------------------------------
+
+#include <painlessMesh.h>
+
+#define   MESH_PREFIX     "MyMeshNet"
+#define   MESH_PASSWORD   "supersecret"
+#define   MESH_PORT       5555
+
+painlessMesh mesh;
+Scheduler userScheduler;
+
+// send a "hello" every 1–5 seconds
+Task taskSendMessage(TASK_SECOND * 1, TASK_FOREVER, []() {
+  String msg = "Hello from node ";
+  msg += mesh.getNodeId();
+  mesh.sendBroadcast(msg);
+  taskSendMessage.setInterval(random(TASK_SECOND * 1, TASK_SECOND * 5));
+});
+
+// ---- Callbacks (observe these in Serial Monitor) ----
+void receivedCallback(uint32_t from, String &msg) {
+  Serial.printf("[RECV] from %u: %s\n", from, msg.c_str());
+}
+
+void newConnectionCallback(uint32_t nodeId) {
+  Serial.printf("--> startHere: New Connection, nodeId = %u\n", nodeId);
+}
+
+void changedConnectionCallback() {
+  Serial.println("Changed connections");
+}
+
+void nodeTimeAdjustedCallback(int32_t offset) {
+  // mesh.getNodeTime() requires recent painlessMesh; if unavailable, print only offset
+  Serial.printf("Adjusted time. Offset = %ld\n", (long)offset);
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+
+  // Keep startup + errors only for a calmer log on Task 1
+  mesh.setDebugMsgTypes(ERROR | STARTUP);
+
+  mesh.init(MESH_PREFIX, MESH_PASSWORD, &userScheduler, MESH_PORT);
+
+  mesh.onReceive(&receivedCallback);
+  mesh.onNewConnection(&newConnectionCallback);
+  mesh.onChangedConnections(&changedConnectionCallback);
+  mesh.onNodeTimeAdjusted(&nodeTimeAdjustedCallback);
+
+  userScheduler.addTask(taskSendMessage);
+  taskSendMessage.enable();
+
+  Serial.printf("[BOOT] Node ID: %u\n", mesh.getNodeId());
+}
+
+void loop() {
+  mesh.update();
+}
+
+
+
+
+
+
+
+
+
+
+
+// ===== Task 2: Direct (single-node) messaging =====
+// -------------------------------------------
+// -------------------------------------------
+// -------------------------------------------
+#include <painlessMesh.h>
+
+#define   MESH_PREFIX     "MyMeshNet"
+#define   MESH_PASSWORD   "supersecret"
+#define   MESH_PORT       5555
+
+painlessMesh mesh;
+Scheduler userScheduler;
+
+// --- Set your default target here (can be changed via Serial) ---
+uint32_t targetNodeId = 0;  // 0 means "unset". Type an ID via Serial to set.
+
+String serialBuffer;
+
+Task taskSendSingle(TASK_SECOND * 2, TASK_FOREVER, []() {
+  if (targetNodeId == 0) {
+    // No target set yet; print a hint occasionally
+    static uint32_t counter = 0;
+    if ((counter++ % 5) == 0) {
+      Serial.println("[HINT] Set target by typing a node ID and pressing Enter.");
+    }
+    return;
+  }
+
+  if (mesh.isConnected(targetNodeId)) {
+    String msg = "Direct hello from node " + String(mesh.getNodeId());
+    bool ok = mesh.sendSingle(targetNodeId, msg);
+    Serial.printf("[SEND->%u] %s (ok=%d)\n", targetNodeId, msg.c_str(), ok ? 1 : 0);
+  } else {
+    Serial.printf("[WARN] Target %u not connected right now.\n", targetNodeId);
+  }
+
+  taskSendSingle.setInterval(random(TASK_SECOND * 2, TASK_SECOND * 6));
+});
+
+void receivedCallback(uint32_t from, String &msg) {
+  Serial.printf("[RECV] from %u: %s\n", from, msg.c_str());
+}
+
+void newConnectionCallback(uint32_t nodeId) {
+  Serial.printf("--> startHere: New Connection, nodeId = %u\n", nodeId);
+}
+
+void changedConnectionCallback() {
+  Serial.println("Changed connections");
+}
+
+void nodeTimeAdjustedCallback(int32_t offset) {
+  Serial.printf("Adjusted time. Offset = %ld\n", (long)offset);
+}
+
+// --- Simple line-based Serial input to set the target ID ---
+void handleSerialInput() {
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\r') continue;
+    if (c == '\n') {
+      if (serialBuffer.length() > 0) {
+        uint32_t id = (uint32_t)strtoul(serialBuffer.c_str(), nullptr, 10);
+        if (id > 0) {
+          targetNodeId = id;
+          Serial.printf("[CFG] targetNodeId set to %u\n", targetNodeId);
+        } else {
+          Serial.println("[ERR] Invalid ID. Enter a positive integer.");
+        }
+        serialBuffer = "";
+      }
+    } else {
+      serialBuffer += c;
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+
+  mesh.setDebugMsgTypes(ERROR | STARTUP);
+  mesh.init(MESH_PREFIX, MESH_PASSWORD, &userScheduler, MESH_PORT);
+
+  mesh.onReceive(&receivedCallback);
+  mesh.onNewConnection(&newConnectionCallback);
+  mesh.onChangedConnections(&changedConnectionCallback);
+  mesh.onNodeTimeAdjusted(&nodeTimeAdjustedCallback);
+
+  userScheduler.addTask(taskSendSingle);
+  taskSendSingle.enable();
+
+  Serial.printf("[BOOT] Node ID: %u\n", mesh.getNodeId());
+  Serial.println("[INFO] Type a target node ID and press Enter to set it.");
+}
+
+void loop() {
+  mesh.update();
+  handleSerialInput();
+}
+
+
